@@ -27,9 +27,10 @@ def create_tables():
     conn.commit()
 
 def filling_table():
-    matches = get_requests()
+
     conn = get_connection()
     cursor = conn.cursor()
+    matches = get_requests()
     for match in matches:
         cursor.execute(
         '''

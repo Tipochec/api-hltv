@@ -7,6 +7,8 @@ def get_requests():
     response = requests.get(BASE_URL)
     data = response.json()
     list = []
+    print(data)
+    print(list)
     for match in data:
         
         if len(match['opponents']) < 2:
@@ -30,5 +32,6 @@ def get_requests():
             'tournament': tournament,
             'date': date
         })
-        print(f"{team1} vs {team2} | {status} | {score1}:{score2} | {tournament} | {date}")
+        print(list)
     return list
+

@@ -30,4 +30,5 @@ def get_requests():
             'tournament': tournament,
             'date': date
         })
+        print(f"{team1} vs {team2} | {status} | {score1}:{score2} | {tournament} | {date}")
     return list

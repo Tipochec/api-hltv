@@ -7,8 +7,6 @@ def get_requests():
     response = requests.get(BASE_URL)
     data = response.json()
     list = []
-    print(data)
-    print(list)
     for match in data:
         
         if len(match['opponents']) < 2:
@@ -16,6 +14,8 @@ def get_requests():
         id = match['id']
         team1 = match["opponents"][0]["opponent"]["name"]
         team2 = match["opponents"][1]["opponent"]["name"]
+        logo1 = match["opponents"][0]['opponent']['image_url']
+        logo2 = match["opponents"][1]['opponent']['image_url']
         status = match["status"]
         score1 = match["results"][0]["score"]
         score2 = match["results"][1]["score"]
@@ -26,12 +26,14 @@ def get_requests():
             'id': id,
             'team1': team1,
             'team2': team2,
+            'logo1': logo1,
+            'logo2': logo2,
             'status': status,
             'score1': score1,
             'score2': score2,
             'tournament': tournament,
             'date': date
         })
-        print(list)
+
     return list
 

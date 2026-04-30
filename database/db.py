@@ -46,7 +46,7 @@ def filling_table():
     status_map = {
         "finished": "Завершённые",
         "not_started": "Не начатые",
-        "in_progress": "В процессе"
+        "running": "В процессе"
     }
 
     for match in matches:

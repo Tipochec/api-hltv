@@ -28,6 +28,13 @@ class MainWindow:
         self.queue = queue.Queue()
         self.scroll = None
         self.app = None
+        self.search_after_id = None
+        # NEW: полный список матчей
+        self.all_matches = []
+        self.image_cache = {}
+        # NEW: поле поиска
+        self.search_entry = None
+
         self.make_widget()
 
     # ── Загрузка картинок ─────────────────────────────────────────
@@ -35,13 +42,26 @@ class MainWindow:
     def load_image(self, url: str | None):
         if not url:
             return None
+
+        if url in self.image_cache:
+            return self.image_cache[url]
+
         try:
             response = requests.get(url, timeout=15)
             response.raise_for_status()
+
             img_bytes = BytesIO(response.content)
-            img_bytes.seek(0)
             pil_img = Image.open(img_bytes).convert("RGBA").resize(LOGO_SIZE, Image.LANCZOS)
-            return ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=LOGO_SIZE)
+
+            ctk_img = ctk.CTkImage(
+                light_image=pil_img,
+                dark_image=pil_img,
+                size=LOGO_SIZE
+            )
+
+            self.image_cache[url] = ctk_img
+            return ctk_img
+
         except Exception as e:
             print(f"[logo] {e}")
             return None
@@ -57,9 +77,14 @@ class MainWindow:
         try:
             while True:
                 label, img = self.queue.get_nowait()
-                label.configure(image=img, text="")
+
+                if label.winfo_exists():
+                    label.configure(image=img, text="")
+                    label.image = img  # защита от garbage collector
+
         except queue.Empty:
             pass
+
         self.app.after(100, self._process_queue)
 
     def _load_default(self, label):
@@ -77,22 +102,70 @@ class MainWindow:
         dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=7)
         return dt.strftime("%d/%m/%Y, %H:%M")
 
-    # ── Построение карточек ───────────────────────────────────────
+    # ── Получение матчей из БД ────────────────────────────────────
 
-    def build_matches(self):
-        # Удаляем старый scroll если есть
-        for widget in self.scroll.winfo_children():
-            widget.destroy()
+    def delayed_search(self, event=None):
+        if self.search_after_id:
+            self.app.after_cancel(self.search_after_id)
 
+        self.search_after_id = self.app.after(300, self.on_search)
+    
+    def fetch_matches(self):
         conn = get_connection()
         cursor = conn.cursor()
+
         matches = cursor.execute(
             """
             SELECT team1, team2, logo1, logo2, score1, score2, status, tournament, date
             FROM matchs
             """
         ).fetchall()
+
         conn.close()
+        return matches
+
+    # ── Поиск ─────────────────────────────────────────────────────
+
+    def on_search(self, event=None):
+        search_text = self.search_entry.get().lower().strip()
+
+        if not search_text:
+            filtered_matches = self.all_matches
+        else:
+            filtered_matches = [
+                match for match in self.all_matches
+                if search_text in (match[0] or "").lower()   # team1
+                or search_text in (match[1] or "").lower()   # team2
+                or search_text in (match[7] or "").lower()   # tournament
+            ]
+
+        self.display_matches(filtered_matches)
+
+    # ── Построение карточек ───────────────────────────────────────
+
+    def build_matches(self):
+        # Загружаем все матчи
+        self.all_matches = self.fetch_matches()
+
+        # Показываем все
+        self.display_matches(self.all_matches)
+
+    # ── Отображение матчей ────────────────────────────────────────
+
+    def display_matches(self, matches):
+        # Удаляем старые виджеты
+        for widget in self.scroll.winfo_children():
+            widget.destroy()
+
+        # Если ничего не найдено
+        if not matches:
+            ctk.CTkLabel(
+                self.scroll,
+                text="Ничего не найдено",
+                text_color=CLR_MUTED,
+                font=ctk.CTkFont(size=18, weight="bold")
+            ).pack(pady=30)
+            return
 
         # Шрифты
         vs_font     = ctk.CTkFont(family="Segoe UI", size=22, weight="bold")
@@ -110,8 +183,10 @@ class MainWindow:
 
             # VS
             ctk.CTkLabel(
-                self.scroll, text="VS",
-                font=vs_font, text_color=CLR_ACCENT
+                self.scroll,
+                text="VS",
+                font=vs_font,
+                text_color=CLR_ACCENT
             ).grid(row=base_row, column=1, pady=(10, 0))
 
             # Левая сторона
@@ -120,20 +195,25 @@ class MainWindow:
 
             logo1_label = ctk.CTkLabel(left, text="", width=40, height=40)
             logo1_label.pack(side="left", padx=(0, 6))
+
             if logo1:
                 self.load_image_async(logo1, logo1_label)
             else:
                 self._load_default(logo1_label)
 
             ctk.CTkLabel(
-                left, text=team1,
-                font=team_font, text_color=CLR_TEXT
+                left,
+                text=team1,
+                font=team_font,
+                text_color=CLR_TEXT
             ).pack(side="left")
 
             # Счёт
             ctk.CTkLabel(
-                self.scroll, text=f"{score1} : {score2}",
-                font=score_font, text_color=CLR_SUCCESS
+                self.scroll,
+                text=f"{score1} : {score2}",
+                font=score_font,
+                text_color=CLR_SUCCESS
             ).grid(row=base_row + 1, column=1)
 
             # Правая сторона
@@ -141,12 +221,15 @@ class MainWindow:
             right.grid(row=base_row + 1, column=2, sticky="w", padx=10)
 
             ctk.CTkLabel(
-                right, text=team2,
-                font=team_font, text_color=CLR_TEXT
+                right,
+                text=team2,
+                font=team_font,
+                text_color=CLR_TEXT
             ).pack(side="left")
 
             logo2_label = ctk.CTkLabel(right, text="", width=40, height=40)
             logo2_label.pack(side="left", padx=(6, 0))
+
             if logo2:
                 self.load_image_async(logo2, logo2_label)
             else:
@@ -154,26 +237,43 @@ class MainWindow:
 
             # Статус
             ctk.CTkLabel(
-                self.scroll, text=f"● {status}",
-                font=status_font, text_color=CLR_MUTED
+                self.scroll,
+                text=f"● {status}",
+                font=status_font,
+                text_color=CLR_MUTED
             ).grid(row=base_row + 2, column=1)
 
-            # Турнир и дата
+            # Турнир
             ctk.CTkLabel(
-                self.scroll, text=f"🏆 {tournament}",
-                font=info_font, text_color=CLR_MUTED, anchor="w"
+                self.scroll,
+                text=f"🏆 {tournament}",
+                font=info_font,
+                text_color=CLR_MUTED,
+                anchor="w"
             ).grid(row=base_row + 3, column=0, padx=10, sticky="w")
 
+            # Дата
             ctk.CTkLabel(
-                self.scroll, text=f"🕐 {self.format_date(date)}",
-                font=info_font, text_color=CLR_MUTED, anchor="e"
+                self.scroll,
+                text=f"🕐 {self.format_date(date)}",
+                font=info_font,
+                text_color=CLR_MUTED,
+                anchor="e"
             ).grid(row=base_row + 3, column=2, padx=10, sticky="e")
 
             # Разделитель
             ctk.CTkFrame(
-                self.scroll, height=2, fg_color=CLR_CARD2
-            ).grid(row=base_row + 4, column=0, columnspan=3,
-                   sticky="ew", padx=20, pady=(10, 0))
+                self.scroll,
+                height=2,
+                fg_color=CLR_CARD2
+            ).grid(
+                row=base_row + 4,
+                column=0,
+                columnspan=3,
+                sticky="ew",
+                padx=20,
+                pady=(10, 0)
+            )
 
     # ── Обновление ────────────────────────────────────────────────
 
@@ -181,23 +281,52 @@ class MainWindow:
         filling_table()
         self.build_matches()
 
+        # NEW: сохраняем поиск после обновления
+        self.on_search()
+
     # ── Главное окно ──────────────────────────────────────────────
 
     def make_widget(self):
         self.app = ctk.CTk()
         self.app.title("CS2 Dashboard")
-        self.app.geometry("700x500")
+        self.app.geometry("700x550")
         self.app.resizable(False, False)
         self.app.configure(fg_color=CLR_BG)
 
+        # Верхняя панель
+        top_frame = ctk.CTkFrame(self.app, fg_color="transparent")
+        top_frame.pack(side="top", fill="x", padx=10, pady=(10, 5))
+
         # Кнопка обновить
         ctk.CTkButton(
-            self.app,
+            top_frame,
             text="🔄 Обновить",
-            command=self.refresh
-        ).pack(side="top", pady=10)
-        self.scroll = ctk.CTkScrollableFrame(self.app, fg_color=CLR_BG)
-        self.scroll.pack(side="top", fill="both", expand=True, padx=10, pady=(0, 10))
+            command=self.refresh,
+            width=120
+        ).pack(side="left", padx=(0, 10))
+
+        # NEW: Поиск
+        self.search_entry = ctk.CTkEntry(
+            top_frame,
+            placeholder_text="Поиск по команде или турниру..."
+        )
+        self.search_entry.pack(side="left", fill="x", expand=True)
+
+        self.search_entry.bind("<KeyRelease>", self.delayed_search)
+
+        # Скролл
+        self.scroll = ctk.CTkScrollableFrame(
+            self.app,
+            fg_color=CLR_BG
+        )
+        self.scroll.pack(
+            side="top",
+            fill="both",
+            expand=True,
+            padx=10,
+            pady=(0, 10)
+        )
+
         self.build_matches()
         self.app.after(100, self._process_queue)
         self.app.mainloop()
